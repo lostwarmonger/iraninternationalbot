@@ -1,8 +1,8 @@
 name: YouTube Live Screenshot (Playwright)
 on:
   schedule:
-    - cron: '*/10 * * * *'  # Every 10 minutes
-  workflow_dispatch:        # Manual trigger
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
 jobs:
   capture:
     runs-on: ubuntu-latest
@@ -15,6 +15,7 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+          cache: 'pip'  # 👈 Speeds up installs
 
       - name: Install Python packages
         run: pip install -r requirements.txt
@@ -33,6 +34,6 @@ jobs:
         if: failure()
         run: |
           echo "❌ Job failed. Quick checks:"
-          echo "1. Is the YouTube stream LIVE? (test in incognito)"
+          echo "1. Is stream LIVE? (test in incognito)"
           echo "2. Is it public? (no login/age gate)"
-          echo "3. Try running manually again in 1-2 minutes"
+          echo "3. Try manual run again in 1-2 min"
