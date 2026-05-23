@@ -1,9 +1,7 @@
 import os
-import io
 import time
 import logging
 import asyncio
-import json
 from playwright.async_api import async_playwright
 from telegram import Bot
 
@@ -26,18 +24,10 @@ def parse_cookie_string(cookie_str: str) -> list[dict]:
             "secure": True,
             "httpOnly": name in ["LOGIN_INFO", "SID", "__Secure-1PSID", "__Secure-3PSID", "HSID", "SSID"],
         })
-    # Add required base cookies if missing
-    base_cookies = [
-        {"name": "PREF", "value": "f4=4000000&f6=40000000", "domain": ".youtube.com", "path": "/", "secure": True, "httpOnly": False},
-        {"name": "VISITOR_INFO1_LIVE", "value": "live", "domain": ".youtube.com", "path": "/", "secure": True, "httpOnly": False},
-    ]
-    for bc in base_cookies:
-        if not any(c["name"] == bc["name"] for c in cookies):
-            cookies.append(bc)
     return cookies
 
-async def capture_youtube_with_cookies(url: str, cookies: list[dict], output_path: str = "snapshot.jpg") -> bool:
-    """Open YouTube with auth cookies and screenshot the video player."""
+async def capture_youtube_screenshot(url: str, cookies: list[dict], output_path: str = "snapshot.jpg") -> bool:
+    """Capture YouTube live with proper styles and 16:9 aspect ratio."""
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(
@@ -53,48 +43,64 @@ async def capture_youtube_with_cookies(url: str, cookies: list[dict], output_pat
                 ]
             )
             
+            # 👇 KEY: Proper 16:9 viewport
             context = await browser.new_context(
-                viewport={"width": 1280, "height": 720},
+                viewport={"width": 1280, "height": 720},  # 16:9 ratio
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 locale="en-US",
                 timezone_id="Asia/Tehran",
             )
             
-            # 👇 KEY: Add your cookies to authenticate the session
-            await context.add_cookies(cookies)
+            if cookies:
+                await context.add_cookies(cookies)
             
             page = await context.new_page()
             
-            # Block non-essential resources to speed up load
+            # 👇 KEY: Only block heavy/unneeded resources — ALLOW STYLESHEETS
             await page.route("**/*", lambda route: 
-                route.abort() if route.request.resource_type in ["image", "stylesheet", "font", "csp_report", "websocket"] 
+                route.abort() if route.request.resource_type in ["image", "font", "csp_report", "websocket", "media"] 
                 else route.continue_()
             )
             
             logger.info(f"🌐 Loading: {url}")
             await page.goto(url, wait_until="domcontentloaded", timeout=45000)
             
-            # Wait for video player + video element
-            logger.info("⏳ Waiting for video player...")
-            await page.wait_for_selector(".html5-video-player, video", timeout=20000)
-            await asyncio.sleep(3)  # Let stream initialize
+            # Wait for player + let styles apply
+            logger.info("⏳ Waiting for player and styles...")
+            await page.wait_for_selector(".html5-video-player", timeout=20000)
+            await asyncio.sleep(4)  # Let CSS/rendering complete
             
-            # Try to find and screenshot the <video> element directly
+            # 👇 KEY: Screenshot the player container with exact 16:9 crop
             try:
-                video = await page.query_selector("video")
-                if video:
-                    logger.info("🎬 Screenshotting <video> element...")
-                    await video.screenshot(path=output_path)
-                else:
-                    logger.info("🎬 Screenshotting player container...")
-                    player = await page.query_selector(".html5-video-player")
-                    if player:
-                        await player.screenshot(path=output_path)
+                player = await page.query_selector(".html5-video-player")
+                if player:
+                    # Get player bounds
+                    bounds = await player.bounding_box()
+                    if bounds:
+                        # Crop to 16:9 area within player (avoid UI overlays)
+                        clip = {
+                            "x": bounds["x"] + 10,
+                            "y": bounds["y"] + 10,
+                            "width": min(bounds["width"] - 20, 1280),
+                            "height": min(bounds["height"] - 20, 720),
+                        }
+                        # Ensure 16:9 ratio
+                        if clip["width"] / clip["height"] > 16/9:
+                            clip["width"] = clip["height"] * 16/9
+                        else:
+                            clip["height"] = clip["width"] * 9/16
+                            
+                        logger.info(f"🎬 Screenshotting player area: {clip['width']}x{clip['height']}")
+                        await page.screenshot(path=output_path, clip=clip)
                     else:
+                        # Fallback: full viewport screenshot
                         await page.screenshot(path=output_path, clip={"x": 0, "y": 0, "width": 1280, "height": 720})
+                else:
+                    # Fallback: full viewport
+                    await page.screenshot(path=output_path, clip={"x": 0, "y": 0, "width": 1280, "height": 720})
             except Exception as e:
-                logger.warning(f"⚠️ Element screenshot failed, falling back: {e}")
-                await page.screenshot(path=output_path, full_page=False)
+                logger.warning(f"⚠️ Player screenshot failed, using fallback: {e}")
+                await page.screenshot(path=output_path, clip={"x": 0, "y": 0, "width": 1280, "height": 720})
             
             logger.info(f"✅ Screenshot saved: {output_path}")
             await browser.close()
@@ -121,7 +127,7 @@ async def send_photo_to_telegram(bot_token: str, chat_id: str, photo_path: str) 
         return False
 
 async def main():
-    logger.info("🚀 Starting authenticated snapshot task...")
+    logger.info("🚀 Starting snapshot task...")
     
     bot_token = os.environ.get("BOT_TOKEN")
     chat_id = os.environ.get("CHAT_ID")
@@ -132,19 +138,13 @@ async def main():
         logger.error("❌ Missing BOT_TOKEN or CHAT_ID")
         exit(1)
     
-    if not cookie_str:
-        logger.warning("⚠️ No YOUTUBE_COOKIES provided — may get blocked by YouTube")
-    
-    # Parse cookies
     cookies = parse_cookie_string(cookie_str) if cookie_str else []
     
-    # Capture screenshot
-    success = await capture_youtube_with_cookies(youtube_url, cookies, "snapshot.jpg")
+    success = await capture_youtube_screenshot(youtube_url, cookies, "snapshot.jpg")
     if not success:
         logger.error("❌ Failed to capture screenshot")
         exit(1)
     
-    # Send to Telegram
     sent = await send_photo_to_telegram(bot_token, chat_id, "snapshot.jpg")
     if not sent:
         logger.error("❌ Failed to send photo")
