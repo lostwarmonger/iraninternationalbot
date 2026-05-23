@@ -3,18 +3,43 @@ import io
 import time
 import logging
 import asyncio
-import random
+import json
 from playwright.async_api import async_playwright
 from telegram import Bot
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-async def capture_youtube_video_element(url: str, output_path: str = "snapshot.jpg") -> bool:
-    """Capture ONLY the video element from YouTube, bypassing overlays."""
+def parse_cookie_string(cookie_str: str) -> list[dict]:
+    """Parse YouTube cookie string into Playwright format."""
+    cookies = []
+    for item in cookie_str.split(';'):
+        if '=' not in item:
+            continue
+        name, value = item.split('=', 1)
+        name, value = name.strip(), value.strip()
+        cookies.append({
+            "name": name,
+            "value": value,
+            "domain": ".youtube.com",
+            "path": "/",
+            "secure": True,
+            "httpOnly": name in ["LOGIN_INFO", "SID", "__Secure-1PSID", "__Secure-3PSID", "HSID", "SSID"],
+        })
+    # Add required base cookies if missing
+    base_cookies = [
+        {"name": "PREF", "value": "f4=4000000&f6=40000000", "domain": ".youtube.com", "path": "/", "secure": True, "httpOnly": False},
+        {"name": "VISITOR_INFO1_LIVE", "value": "live", "domain": ".youtube.com", "path": "/", "secure": True, "httpOnly": False},
+    ]
+    for bc in base_cookies:
+        if not any(c["name"] == bc["name"] for c in cookies):
+            cookies.append(bc)
+    return cookies
+
+async def capture_youtube_with_cookies(url: str, cookies: list[dict], output_path: str = "snapshot.jpg") -> bool:
+    """Open YouTube with auth cookies and screenshot the video player."""
     try:
         async with async_playwright() as p:
-            # Launch with maximum stealth
             browser = await p.chromium.launch(
                 headless=True,
                 args=[
@@ -24,8 +49,7 @@ async def capture_youtube_video_element(url: str, output_path: str = "snapshot.j
                     "--disable-accelerated-2d-canvas",
                     "--disable-gpu",
                     "--disable-blink-features=AutomationControlled",
-                    "--disable-features=IsolateOrigins,site-per-process",
-                    "--mute-audio",  # No sound needed
+                    "--mute-audio",
                 ]
             )
             
@@ -33,58 +57,54 @@ async def capture_youtube_video_element(url: str, output_path: str = "snapshot.j
                 viewport={"width": 1280, "height": 720},
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 locale="en-US",
-                timezone_id="America/New_York",
-                permissions=["geolocation"],
+                timezone_id="Asia/Tehran",
             )
             
-            # 👇 Fake geolocation to look more human
-            await context.grant_permissions(["geolocation"])
-            await context.set_geolocation({"latitude": 40.7128, "longitude": -74.0060})
+            # 👇 KEY: Add your cookies to authenticate the session
+            await context.add_cookies(cookies)
             
             page = await context.new_page()
             
-            # 👇 Block unnecessary resources to speed up load + reduce detection surface
+            # Block non-essential resources to speed up load
             await page.route("**/*", lambda route: 
-                route.abort() if route.request.resource_type in ["image", "stylesheet", "font", "csp_report"] 
+                route.abort() if route.request.resource_type in ["image", "stylesheet", "font", "csp_report", "websocket"] 
                 else route.continue_()
             )
             
             logger.info(f"🌐 Loading: {url}")
-            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=45000)
             
-            # Wait for video element specifically
-            logger.info("⏳ Waiting for <video> element...")
+            # Wait for video player + video element
+            logger.info("⏳ Waiting for video player...")
+            await page.wait_for_selector(".html5-video-player, video", timeout=20000)
+            await asyncio.sleep(3)  # Let stream initialize
+            
+            # Try to find and screenshot the <video> element directly
             try:
-                video = await page.wait_for_selector("video", timeout=25000)
-                await asyncio.sleep(random.uniform(2, 4))  # Human-like delay
-                
-                # 👇 KEY: Screenshot ONLY the video element (ignores overlays)
-                logger.info("🎬 Screenshotting video element only...")
-                await video.screenshot(path=output_path)
-                logger.info(f"✅ Video element screenshot saved: {output_path}")
-                
+                video = await page.query_selector("video")
+                if video:
+                    logger.info("🎬 Screenshotting <video> element...")
+                    await video.screenshot(path=output_path)
+                else:
+                    logger.info("🎬 Screenshotting player container...")
+                    player = await page.query_selector(".html5-video-player")
+                    if player:
+                        await player.screenshot(path=output_path)
+                    else:
+                        await page.screenshot(path=output_path, clip={"x": 0, "y": 0, "width": 1280, "height": 720})
             except Exception as e:
-                logger.error(f"❌ Could not find or screenshot video element: {e}")
-                # Fallback: try full page screenshot with overlay removal attempt
-                await page.evaluate("""
-                    () => {
-                        // Try to hide common YouTube overlays
-                        document.querySelectorAll('.ytp-ce-element, .ytp-pause-overlay, .ytp-chrome-bottom, .yt-simple-endpoint, .yt-spec-button-shape-next').forEach(el => el.style.display = 'none');
-                    }
-                """)
-                await asyncio.sleep(2)
+                logger.warning(f"⚠️ Element screenshot failed, falling back: {e}")
                 await page.screenshot(path=output_path, full_page=False)
-                logger.info("✅ Fallback full-page screenshot taken")
             
+            logger.info(f"✅ Screenshot saved: {output_path}")
             await browser.close()
             return True
             
     except Exception as e:
-        logger.error(f"❌ Browser task failed: {e}")
+        logger.error(f"❌ Capture failed: {e}")
         return False
 
 async def send_photo_to_telegram(bot_token: str, chat_id: str, photo_path: str) -> bool:
-    """Send screenshot to Telegram."""
     try:
         bot = Bot(token=bot_token)
         with open(photo_path, "rb") as photo:
@@ -101,20 +121,27 @@ async def send_photo_to_telegram(bot_token: str, chat_id: str, photo_path: str) 
         return False
 
 async def main():
-    logger.info("🚀 Starting stealth snapshot task...")
+    logger.info("🚀 Starting authenticated snapshot task...")
     
     bot_token = os.environ.get("BOT_TOKEN")
     chat_id = os.environ.get("CHAT_ID")
     youtube_url = os.environ.get("YOUTUBE_URL", "https://www.youtube.com/watch?v=5JDxjsAVaGk")
+    cookie_str = os.environ.get("YOUTUBE_COOKIES", "")
     
     if not bot_token or not chat_id:
         logger.error("❌ Missing BOT_TOKEN or CHAT_ID")
         exit(1)
     
-    # Capture video element screenshot
-    success = await capture_youtube_video_element(youtube_url, "snapshot.jpg")
+    if not cookie_str:
+        logger.warning("⚠️ No YOUTUBE_COOKIES provided — may get blocked by YouTube")
+    
+    # Parse cookies
+    cookies = parse_cookie_string(cookie_str) if cookie_str else []
+    
+    # Capture screenshot
+    success = await capture_youtube_with_cookies(youtube_url, cookies, "snapshot.jpg")
     if not success:
-        logger.error("❌ Failed to capture video")
+        logger.error("❌ Failed to capture screenshot")
         exit(1)
     
     # Send to Telegram
