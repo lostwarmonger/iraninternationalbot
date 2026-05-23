@@ -2,11 +2,18 @@ import os
 import time
 import logging
 import asyncio
+from datetime import datetime
+import pytz
 from playwright.async_api import async_playwright
 from telegram import Bot
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+def get_tehran_time() -> str:
+    """Return current time in Tehran formatted as HH:MM:SS"""
+    tehran = pytz.timezone("Asia/Tehran")
+    return datetime.now(tehran).strftime("%H:%M:%S")
 
 def parse_cookie_string(cookie_str: str) -> list[dict]:
     """Parse YouTube cookie string into Playwright format."""
@@ -26,8 +33,8 @@ def parse_cookie_string(cookie_str: str) -> list[dict]:
         })
     return cookies
 
-async def capture_youtube_screenshot(url: str, cookies: list[dict], output_path: str = "snapshot.jpg") -> bool:
-    """Capture YouTube live with proper styles and 16:9 aspect ratio."""
+async def capture_youtube_fullpage(url: str, cookies: list[dict], output_path: str = "snapshot.jpg") -> bool:
+    """Capture YouTube live with full page (video + comments) and proper Tehran time."""
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(
@@ -43,12 +50,12 @@ async def capture_youtube_screenshot(url: str, cookies: list[dict], output_path:
                 ]
             )
             
-            # 👇 KEY: Proper 16:9 viewport
+            # 👇 Larger viewport to show video + comments side-by-side
             context = await browser.new_context(
-                viewport={"width": 1280, "height": 720},  # 16:9 ratio
+                viewport={"width": 1400, "height": 900},  # Wider to fit video + comments
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 locale="en-US",
-                timezone_id="Asia/Tehran",
+                timezone_id="Asia/Tehran",  # 👈 Helps YouTube show correct regional content
             )
             
             if cookies:
@@ -56,51 +63,23 @@ async def capture_youtube_screenshot(url: str, cookies: list[dict], output_path:
             
             page = await context.new_page()
             
-            # 👇 KEY: Only block heavy/unneeded resources — ALLOW STYLESHEETS
+            # 👇 Allow stylesheets + essential resources (block only heavy stuff)
             await page.route("**/*", lambda route: 
-                route.abort() if route.request.resource_type in ["image", "font", "csp_report", "websocket", "media"] 
+                route.abort() if route.request.resource_type in ["font", "csp_report", "websocket"] 
                 else route.continue_()
             )
             
             logger.info(f"🌐 Loading: {url}")
             await page.goto(url, wait_until="domcontentloaded", timeout=45000)
             
-            # Wait for player + let styles apply
-            logger.info("⏳ Waiting for player and styles...")
+            # Wait for player + let page fully render
+            logger.info("⏳ Waiting for page to render...")
             await page.wait_for_selector(".html5-video-player", timeout=20000)
-            await asyncio.sleep(4)  # Let CSS/rendering complete
+            await asyncio.sleep(5)  # Let comments/UI load
             
-            # 👇 KEY: Screenshot the player container with exact 16:9 crop
-            try:
-                player = await page.query_selector(".html5-video-player")
-                if player:
-                    # Get player bounds
-                    bounds = await player.bounding_box()
-                    if bounds:
-                        # Crop to 16:9 area within player (avoid UI overlays)
-                        clip = {
-                            "x": bounds["x"] + 10,
-                            "y": bounds["y"] + 10,
-                            "width": min(bounds["width"] - 20, 1280),
-                            "height": min(bounds["height"] - 20, 720),
-                        }
-                        # Ensure 16:9 ratio
-                        if clip["width"] / clip["height"] > 16/9:
-                            clip["width"] = clip["height"] * 16/9
-                        else:
-                            clip["height"] = clip["width"] * 9/16
-                            
-                        logger.info(f"🎬 Screenshotting player area: {clip['width']}x{clip['height']}")
-                        await page.screenshot(path=output_path, clip=clip)
-                    else:
-                        # Fallback: full viewport screenshot
-                        await page.screenshot(path=output_path, clip={"x": 0, "y": 0, "width": 1280, "height": 720})
-                else:
-                    # Fallback: full viewport
-                    await page.screenshot(path=output_path, clip={"x": 0, "y": 0, "width": 1280, "height": 720})
-            except Exception as e:
-                logger.warning(f"⚠️ Player screenshot failed, using fallback: {e}")
-                await page.screenshot(path=output_path, clip={"x": 0, "y": 0, "width": 1280, "height": 720})
+            # 👇 KEY: Full viewport screenshot (no crop) - shows video + comments
+            logger.info("📸 Taking full viewport screenshot...")
+            await page.screenshot(path=output_path, full_page=False)
             
             logger.info(f"✅ Screenshot saved: {output_path}")
             await browser.close()
@@ -113,14 +92,16 @@ async def capture_youtube_screenshot(url: str, cookies: list[dict], output_path:
 async def send_photo_to_telegram(bot_token: str, chat_id: str, photo_path: str) -> bool:
     try:
         bot = Bot(token=bot_token)
+        # 👇 Use Tehran time in caption
+        tehran_time = get_tehran_time()
         with open(photo_path, "rb") as photo:
             await bot.send_photo(
                 chat_id=chat_id,
                 photo=photo,
-                caption=f"🔴 Live • {time.strftime('%H:%M:%S')}",
+                caption=f"🔴 Live • {tehran_time}",
                 read_timeout=30,
             )
-        logger.info("✅ Photo sent to Telegram.")
+        logger.info(f"✅ Photo sent to Telegram (Tehran time: {tehran_time})")
         return True
     except Exception as e:
         logger.error(f"❌ Telegram send failed: {e}")
@@ -140,7 +121,7 @@ async def main():
     
     cookies = parse_cookie_string(cookie_str) if cookie_str else []
     
-    success = await capture_youtube_screenshot(youtube_url, cookies, "snapshot.jpg")
+    success = await capture_youtube_fullpage(youtube_url, cookies, "snapshot.jpg")
     if not success:
         logger.error("❌ Failed to capture screenshot")
         exit(1)
