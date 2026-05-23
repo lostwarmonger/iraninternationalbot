@@ -1,4 +1,4 @@
-name: YouTube Live Screenshot (Playwright)
+name: YouTube Live Screenshot (Cookies)
 on:
   schedule:
     - cron: '*/10 * * * *'
@@ -15,7 +15,7 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-          cache: 'pip'  # 👈 Speeds up installs
+          cache: 'pip'
 
       - name: Install Python packages
         run: pip install -r requirements.txt
@@ -28,12 +28,13 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           YOUTUBE_URL: ${{ secrets.YOUTUBE_URL }}
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
         run: python main.py
 
       - name: If failed, show tip
         if: failure()
         run: |
           echo "❌ Job failed. Quick checks:"
-          echo "1. Is stream LIVE? (test in incognito)"
-          echo "2. Is it public? (no login/age gate)"
+          echo "1. Are cookies still valid? (they expire)"
+          echo "2. Is stream LIVE and public?"
           echo "3. Try manual run again in 1-2 min"
