@@ -1,11 +1,12 @@
 name: YouTube Live Screenshot
 on:
   schedule:
-    - cron: '*/10 * * * *'  # Runs every 10 minutes
-  workflow_dispatch:        # Lets you run it manually
+    - cron: '*/10 * * * *'  # Every 10 minutes
+  workflow_dispatch:        # Manual trigger
 jobs:
   capture:
     runs-on: ubuntu-latest
+    timeout-minutes: 5      # Prevent hanging
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -27,3 +28,11 @@ jobs:
           CHAT_ID: ${{ secrets.CHAT_ID }}
           YOUTUBE_URL: ${{ secrets.YOUTUBE_URL }}
         run: python main.py
+
+      - name: If failed, show helpful tip
+        if: failure()
+        run: |
+          echo "❌ Job failed. Common fixes:"
+          echo "1. Is the YouTube stream LIVE right now? (test in incognito)"
+          echo "2. Is the stream public? (no age/login restrictions)"
+          echo "3. Try manually running the workflow again in 1-2 minutes"
