@@ -6,3 +6,17 @@
 🔁 جلوگیری از ارسال اسکرین‌شات تکراری
 🎬 پخش خودکار ویدیو + اسکرول برای لود کامنت‌ها
 🛡 سازگار با محدودیت‌های اینترنت ایران
+
+
+امکان استفاده از روشی ساده تر هم وجود دارد: 
+استفاده از تامبنیل های یوتیوب با کیفیت های مختلف
+حداکثر (1280×720)
+https://img.youtube.com/vi/VIDEO_ID/maxresdefault_live.jpg
+بالا (640×480)
+https://img.youtube.com/vi/VIDEO_ID/sddefault_live.jpg
+متوسط (480×360)
+https://img.youtube.com/vi/VIDEO_ID/hqdefault_live.jpg
+پایین (320×180)
+https://img.youtube.com/vi/VIDEO_ID/mqdefault_live.jpg
+بسیار پایین (120×90)
+https://img.youtube.com/vi/VIDEO_ID/default_live.jpg
