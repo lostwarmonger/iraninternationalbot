@@ -1,6 +1,8 @@
-# iraninternationalbot
-a bot that takes a screenshot from iraninternational live every few minutes and posts it in a telegram channel
-
-Also, this link or some similar links (with lower quality) can be used: 
-https://img.youtube.com/vi/5JDxjsAVaGk/maxresdefault_live.jpg
-it gives you a high quality thumbnail that updates every 8 or 9 minutes i think; 
+اسکریپت پایتون برای گرفتن اسکرین‌شات خودکار از استریم‌های زنده یوتیوب و ارسال به تلگرام — با زمان تهران و اجرای پایدار روی سرور لینوکس. در این نمونه، پخش زنده شبکه ماهواره ای ایران اینترنشنال استفاده شده است.
+✨ ویژگی‌ها
+🔄 اجرای خودکار هر ۳ دقیقه (قابل تنظیم)
+ نمایش زمان تهران در کپشن تلگرام
+✂️ برش هوشمند تصویر: فقط ویدیو + کامنت‌ها (حذف هدر و بخش‌های اضافی)
+🔁 جلوگیری از ارسال اسکرین‌شات تکراری
+🎬 پخش خودکار ویدیو + اسکرول برای لود کامنت‌ها
+🛡 سازگار با محدودیت‌های اینترنت ایران
